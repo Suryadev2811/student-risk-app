@@ -2,140 +2,121 @@ import streamlit as st
 import pandas as pd
 import joblib
 import shap
-import os
 import numpy as np
 
-# ================= PAGE CONFIG =================
+# ---------------- Page Config ----------------
 st.set_page_config(
-    page_title="Student Risk Predictor",
+    page_title="Student Risk Analytics",
     page_icon="🎓",
     layout="wide"
 )
 
-st.title("🎓 Student Performance Risk Prediction")
-st.caption("Predict academic risk levels with explainable AI (SHAP)")
-
-# ================= LOAD MODEL =================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# ---------------- Load Assets ----------------
+@st.cache_resource
+def load_model():
+    return joblib.load("rf_model.joblib")
 
 @st.cache_resource
-def load_artifacts():
-    model = joblib.load(os.path.join(BASE_DIR, "rf_model.joblib"))
-    encoder = joblib.load(os.path.join(BASE_DIR, "label_encoder.joblib"))
-    return model, encoder
+def load_encoder():
+    return joblib.load("label_encoder.joblib")
 
-rf_model, label_encoder = load_artifacts()
+model = load_model()
+label_encoder = load_encoder()
 
-# ================= FEATURES =================
-FEATURES = [
-    'attendance_pct',
-    'quiz_1','quiz_2','quiz_3','quiz_4','quiz_5',
-    'quiz_avg','quiz_std',
-    'assignment_score',
-    'sessional1','sessional2',
-    'cheating_count','teacher_feedback_score'
-]
+# ---------------- Sidebar ----------------
+st.sidebar.title("🎛 Control Panel")
+st.sidebar.markdown("---")
 
-# ================= SIDEBAR =================
-with st.sidebar:
-    st.header("ℹ️ About")
-    st.write(
-        """
-        This app predicts **student academic risk** using a  
-        **Random Forest model** trained in Google Colab.
-
-        It also explains *why* a prediction was made using **SHAP**.
-        """
-    )
-
-# ================= FILE UPLOAD =================
-st.header("📂 Upload Student Data")
-uploaded_file = st.file_uploader(
-    "Upload CSV or Excel file",
-    type=["csv", "xlsx"]
+uploaded_file = st.sidebar.file_uploader(
+    "Upload Student Data (Excel)",
+    type=["xlsx"]
 )
 
-if uploaded_file is not None:
+# ---------------- Header ----------------
+st.markdown(
+    """
+    <h1 style='text-align:center;'>🎓 Student Risk Prediction Dashboard</h1>
+    <p style='text-align:center; color:gray;'>AI-powered academic risk analysis</p>
+    """,
+    unsafe_allow_html=True
+)
 
-    # ---------- Read data ----------
-    df = (
-        pd.read_excel(uploaded_file)
-        if uploaded_file.name.endswith(".xlsx")
-        else pd.read_csv(uploaded_file)
-    )
+st.markdown("---")
 
-    st.subheader("🧾 Uploaded Data Preview")
-    st.dataframe(df.head(), use_container_width=True)
+# ---------------- Main Logic ----------------
+if uploaded_file:
+    df = pd.read_excel(uploaded_file)
 
-    # ---------- Feature engineering ----------
-    quiz_cols = ['quiz_1','quiz_2','quiz_3','quiz_4','quiz_5']
-    df['quiz_avg'] = df[quiz_cols].mean(axis=1)
-    df['quiz_std'] = df[quiz_cols].std(axis=1)
+    X = df.copy()
+    predictions = model.predict(X)
+    probabilities = model.predict_proba(X).max(axis=1) * 100
 
-    # ---------- Force numeric ----------
-    X = df[FEATURES].apply(pd.to_numeric, errors="coerce")
+    df["Predicted_Risk"] = label_encoder.inverse_transform(predictions)
+    df["Confidence (%)"] = probabilities.round(2)
 
-    # ---------- Prediction ----------
-    preds = rf_model.predict(X)
-    probs = rf_model.predict_proba(X)
-
-    df['Predicted_Risk'] = label_encoder.inverse_transform(preds)
-
-    for i, cls in enumerate(label_encoder.classes_):
-        df[f'Prob_{cls}'] = probs[:, i]
-
-    # ---------- Results ----------
-    st.divider()
+    # ---------- Prediction Results ----------
     st.subheader("📊 Prediction Results")
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, use_container_width=True, height=400)
 
+    # ---------- Risk Distribution ----------
     st.subheader("📈 Risk Distribution")
-    st.bar_chart(df['Predicted_Risk'].value_counts())
+    col1, col2 = st.columns([2, 1])
 
-    # ================= SHAP =================
-    st.divider()
-    st.subheader("🔍 Explain Prediction (SHAP)")
+    with col1:
+        st.bar_chart(df["Predicted_Risk"].value_counts())
 
-    student_index = st.selectbox(
+    with col2:
+        st.metric("Total Students", len(df))
+        st.metric("At Risk", (df["Predicted_Risk"] == "AtRisk").sum())
+        st.metric("Safe", (df["Predicted_Risk"] == "Good").sum())
+
+    st.markdown("---")
+
+    # ---------- SHAP Section ----------
+    st.subheader("🧠 Model Insights")
+
+    student_index = st.slider(
         "Select Student Index",
-        df.index
+        0,
+        len(df) - 1,
+        0
     )
 
-    background = X.sample(min(50, len(X)), random_state=42)
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X)
 
-    def predict_proba_fn(data):
-        data_df = pd.DataFrame(data, columns=FEATURES)
-        return rf_model.predict_proba(data_df)
+    predicted_class = predictions[student_index]
+    class_name = label_encoder.inverse_transform([predicted_class])[0]
 
-    explainer = shap.KernelExplainer(
-        predict_proba_fn,
-        background.values
+    st.markdown(
+        f"""
+        <div style="padding:15px; border-radius:10px; background-color:#f5f7fa;">
+            <h3 style="margin-bottom:0;">Prediction</h3>
+            <h2 style="color:#1f77b4;">{class_name}</h2>
+        </div>
+        """,
+        unsafe_allow_html=True
     )
 
-    shap_values = explainer.shap_values(
-        X.iloc[[student_index]].values,
-        silent=True
+    shap_df = pd.DataFrame({
+        "Feature": X.columns,
+        "Impact": shap_values[predicted_class][student_index]
+    }).sort_values(by="Impact", ascending=False)
+
+    st.markdown("### 🔍 Feature Impact")
+    st.dataframe(shap_df, use_container_width=True, height=350)
+
+    st.markdown("---")
+
+    st.success("✔ Analysis Complete")
+
+else:
+    st.markdown(
+        """
+        <div style="text-align:center; padding:60px;">
+            <h2>📂 Upload Student Dataset</h2>
+            <p style="color:gray;">Use the sidebar to begin analysis</p>
+        </div>
+        """,
+        unsafe_allow_html=True
     )
-
-    shap_arr = np.abs(np.array(shap_values, dtype=object))
-    shap_flat = np.concatenate([np.ravel(s) for s in shap_arr])
-
-    shap_vector = (
-        shap_flat[:len(FEATURES)]
-        if shap_flat.size >= len(FEATURES)
-        else np.pad(shap_flat, (0, len(FEATURES) - shap_flat.size))
-    )
-
-    shap_df = (
-        pd.DataFrame({
-            "Feature": FEATURES,
-            "Impact": shap_vector
-        })
-        .sort_values("Impact", ascending=False)
-    )
-
-    st.success(
-        f"🧠 Predicted Risk: **{df.loc[student_index, 'Predicted_Risk']}**"
-    )
-
-    st.dataframe(shap_df, use_container_width=True)
