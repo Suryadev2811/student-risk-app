@@ -7,13 +7,16 @@ import numpy as np
 
 # ================= PAGE CONFIG =================
 st.set_page_config(
-    page_title="Student Risk Predictor",
+    page_title="Student Risk Dashboard",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-st.title("🎓 Student Performance Risk Prediction with Explainable AI (SHAP)")
-st.caption("Upload student data to predict academic risk and understand key influencing factors")
+st.title("🎓 Student Performance Risk Dashboard")
+st.caption(
+    "An easy-to-use system to identify academically at-risk students "
+    "and understand *why* the prediction was made."
+)
 
 # ================= LOAD MODEL =================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -37,128 +40,152 @@ FEATURES = [
 ]
 
 # ================= SIDEBAR =================
-st.sidebar.header("⚙️ Controls")
+st.sidebar.header("🧭 How to use")
+st.sidebar.markdown(
+    """
+    **Step 1:** Upload student data  
+    **Step 2:** View risk predictions  
+    **Step 3:** Explore why a student is at risk  
+    """
+)
 
+st.sidebar.divider()
 uploaded_file = st.sidebar.file_uploader(
     "📂 Upload Student Data (CSV / Excel)",
     type=["csv", "xlsx"]
 )
 
-# ================= MAIN LOGIC =================
-if uploaded_file is not None:
+# ================= MAIN APP =================
+if uploaded_file is None:
+    st.info("⬅️ Start by uploading a student data file from the sidebar.")
+    st.stop()
 
-    # ---------- Read file ----------
-    df = (
-        pd.read_excel(uploaded_file)
-        if uploaded_file.name.endswith(".xlsx")
-        else pd.read_csv(uploaded_file)
-    )
+# ---------- Load data ----------
+df = (
+    pd.read_excel(uploaded_file)
+    if uploaded_file.name.endswith(".xlsx")
+    else pd.read_csv(uploaded_file)
+)
 
-    # ---------- Feature engineering ----------
-    quiz_cols = ['quiz_1','quiz_2','quiz_3','quiz_4','quiz_5']
-    df['quiz_avg'] = df[quiz_cols].mean(axis=1)
-    df['quiz_std'] = df[quiz_cols].std(axis=1)
+# ---------- Feature engineering ----------
+quiz_cols = ['quiz_1','quiz_2','quiz_3','quiz_4','quiz_5']
+df['quiz_avg'] = df[quiz_cols].mean(axis=1)
+df['quiz_std'] = df[quiz_cols].std(axis=1)
 
-    # ---------- Force numeric ----------
-    X = df[FEATURES].apply(pd.to_numeric, errors="coerce")
+X = df[FEATURES].apply(pd.to_numeric, errors="coerce")
 
-    # ---------- Predictions ----------
-    preds = rf_model.predict(X)
-    probs = rf_model.predict_proba(X)
+# ---------- Prediction ----------
+preds = rf_model.predict(X)
+probs = rf_model.predict_proba(X)
 
-    df['Predicted_Risk'] = label_encoder.inverse_transform(preds)
+df['Predicted_Risk'] = label_encoder.inverse_transform(preds)
 
-    for i, cls in enumerate(label_encoder.classes_):
-        df[f'Prob_{cls}'] = probs[:, i]
+for i, cls in enumerate(label_encoder.classes_):
+    df[f'Prob_{cls}'] = probs[:, i]
 
-    # ================= METRICS =================
-    st.divider()
-    col1, col2, col3 = st.columns(3)
+# ================= SUMMARY METRICS =================
+st.divider()
+st.subheader("📌 Quick Overview")
 
-    col1.metric("👨‍🎓 Total Students", len(df))
-    col2.metric("⚠️ At Risk", (df["Predicted_Risk"] == "AtRisk").sum())
-    col3.metric("🚨 Critical", (df["Predicted_Risk"] == "Critical").sum())
+col1, col2, col3 = st.columns(3)
+col1.metric("👨‍🎓 Total Students", len(df))
+col2.metric("⚠️ At Risk", (df["Predicted_Risk"] == "AtRisk").sum())
+col3.metric("🚨 Critical", (df["Predicted_Risk"] == "Critical").sum())
 
-    # ================= RESULTS TABLE =================
-    st.divider()
-    st.subheader("📊 Prediction Results")
+# ================= FILTER & SEARCH =================
+st.divider()
+st.subheader("🔍 Explore Students")
 
-    st.dataframe(
-        df,
-        use_container_width=True
-    )
+risk_filter = st.selectbox(
+    "Filter by Risk Level",
+    ["All"] + sorted(df["Predicted_Risk"].unique().tolist())
+)
+
+if risk_filter != "All":
+    df_view = df[df["Predicted_Risk"] == risk_filter]
+else:
+    df_view = df.copy()
+
+# ================= RESULTS TABLE =================
+with st.expander("📊 Student Prediction Results", expanded=True):
+    st.dataframe(df_view, use_container_width=True)
 
     st.download_button(
-        "⬇️ Download Prediction Results",
-        data=df.to_csv(index=False),
-        file_name="student_risk_predictions.csv",
-        mime="text/csv"
+        "⬇️ Download Results",
+        df_view.to_csv(index=False),
+        "student_risk_predictions.csv",
+        "text/csv"
     )
 
-    # ================= RISK DISTRIBUTION =================
-    st.divider()
-    st.subheader("📈 Risk Distribution")
+# ================= RISK DISTRIBUTION =================
+st.divider()
+st.subheader("📈 Risk Distribution (Class View)")
 
-    risk_counts = df["Predicted_Risk"].value_counts()
-    st.bar_chart(risk_counts, use_container_width=True)
+st.bar_chart(
+    df["Predicted_Risk"].value_counts(),
+    use_container_width=True
+)
 
-    # ================= SHAP EXPLANATION =================
-    st.divider()
-    st.subheader("🧠 SHAP Explanation (Why this prediction?)")
+# ================= SHAP EXPLANATION =================
+st.divider()
+st.subheader("🧠 Why is this student at risk?")
 
-    student_index = st.sidebar.selectbox(
-        "Select Student Index",
-        df.index
-    )
+student_index = st.selectbox(
+    "Select a student (by row index)",
+    df.index
+)
 
-    st.info(
-        f"Explanation for predicted risk class: "
-        f"**{df.loc[student_index, 'Predicted_Risk']}**"
-    )
+st.success(
+    f"Predicted Risk Level: **{df.loc[student_index, 'Predicted_Risk']}**"
+)
 
-    # ---------- Background sample ----------
-    background = X.sample(min(50, len(X)), random_state=42)
+background = X.sample(min(50, len(X)), random_state=42)
 
-    def predict_proba_fn(data):
-        data_df = pd.DataFrame(data, columns=FEATURES)
-        return rf_model.predict_proba(data_df)
+def predict_proba_fn(data):
+    data_df = pd.DataFrame(data, columns=FEATURES)
+    return rf_model.predict_proba(data_df)
 
-    explainer = shap.KernelExplainer(
-        predict_proba_fn,
-        background.values
-    )
+explainer = shap.KernelExplainer(
+    predict_proba_fn,
+    background.values
+)
 
-    shap_values = explainer.shap_values(
-        X.iloc[[student_index]].values,
-        silent=True
-    )
+shap_values = explainer.shap_values(
+    X.iloc[[student_index]].values,
+    silent=True
+)
 
-    # ---------- Safe SHAP processing ----------
-    shap_arr = np.abs(np.array(shap_values, dtype=object))
-    shap_flat = np.concatenate([np.ravel(s) for s in shap_arr])
+shap_arr = np.abs(np.array(shap_values, dtype=object))
+shap_flat = np.concatenate([np.ravel(s) for s in shap_arr])
 
-    if shap_flat.size >= len(FEATURES):
-        shap_vector = shap_flat[:len(FEATURES)]
-    else:
-        shap_vector = np.pad(
-            shap_flat,
-            (0, len(FEATURES) - shap_flat.size),
-            constant_values=0
-        )
-
-    shap_df = (
-        pd.DataFrame({
-            "Feature": FEATURES,
-            "Impact": shap_vector
-        })
-        .sort_values(by="Impact", ascending=False)
-        .head(8)   # show top 8 only
-    )
-
-    st.dataframe(
-        shap_df,
-        use_container_width=True
-    )
-
+if shap_flat.size >= len(FEATURES):
+    shap_vector = shap_flat[:len(FEATURES)]
 else:
-    st.info("⬅️ Upload a CSV or Excel file from the sidebar to get started")
+    shap_vector = np.pad(
+        shap_flat,
+        (0, len(FEATURES) - shap_flat.size),
+        constant_values=0
+    )
+
+shap_df = (
+    pd.DataFrame({
+        "Feature": FEATURES,
+        "Impact Score": shap_vector
+    })
+    .sort_values(by="Impact Score", ascending=False)
+    .head(8)
+)
+
+with st.expander("📌 Key Factors Influencing This Prediction", expanded=True):
+    st.dataframe(shap_df, use_container_width=True)
+
+st.caption(
+    "Higher impact score = stronger influence on the model’s decision"
+)
+
+# ================= FOOTER =================
+st.divider()
+st.caption(
+    "🎯 This tool is designed to support educators and institutions "
+    "in early identification and intervention."
+)
