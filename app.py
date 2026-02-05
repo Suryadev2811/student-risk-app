@@ -127,4 +127,5 @@ if uploaded_file is not None:
         f"**{df.loc[student_index, 'Predicted_Risk']}**"
     )
 
-    st.dataframe(shap_df, width="stretch")
+    st.dataframe(shap_df, use_container_width=True)
+
