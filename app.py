@@ -14,7 +14,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 @st.cache_resource
 def load_artifacts():
-    model = joblib.load(os.path.join(BASE_DIR, "rf_model (1).joblib"))
+    model = joblib.load(os.path.join(BASE_DIR, "rf_model.joblib"))
     encoder = joblib.load(os.path.join(BASE_DIR, "label_encoder.joblib"))
     return model, encoder
 
@@ -47,7 +47,12 @@ if uploaded_file is not None:
     df['quiz_std'] = df[quiz_cols].std(axis=1)
 
     # ---------- Force numeric ----------
-    X = df[FEATURES].apply(pd.to_numeric, errors="coerce")
+    X = (
+    df[FEATURES]
+    .apply(pd.to_numeric, errors="coerce")
+    .fillna(0)
+)
+
 
     # ---------- Prediction ----------
     preds = rf_model.predict(X)
