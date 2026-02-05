@@ -65,7 +65,8 @@ if uploaded_file is not None:
 
     # ---------- Display ----------
     st.subheader("📊 Prediction Results")
-    st.dataframe(df, width="stretch")
+    st.dataframe(df, use_container_width=True)
+
 
     st.subheader("📈 Risk Distribution")
     st.bar_chart(df['Predicted_Risk'].value_counts())
